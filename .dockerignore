@@ -1,0 +1,26 @@
+# 本地/敏感文件，不需要进入镜像
+.venv/
+venv/
+.git/
+.idea/
+.vscode/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+web_signin/db/
+*.db
+*.sqlite
+*.sqlite3
+.claude/
+
+# 运行时产物与调试文件
+debug_html.txt
+web_signin/debug_html.txt
+debug_qr.html
+logs/
+*.log
+
+# 系统文件与文档图片
+.DS_Store
+doc/

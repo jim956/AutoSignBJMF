@@ -1,0 +1,47 @@
+## 本地环境变量（docker compose 会读取仓库根目录的 .env，例如 WEB_SIGNIN_PORT）
+/.env
+.env.*
+*.env
+
+## Python 缓存
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+
+## 虚拟环境
+.venv/
+venv/
+env/
+
+## 日志与运行时输出
+logs/
+*.log
+*.out
+*.tmp
+
+## 数据库 / 缓存文件（签到任务数据都存放在 SQLite 中，不入库）
+web_signin/db/
+*.db
+*.db3
+*.sqlite
+*.sqlite3
+*.bak
+
+## 签到调试产物（仅在 BJMF_DEBUG_HTML=1 时生成）
+debug_html.txt
+web_signin/debug_qr.html
+
+## 编辑器与 IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/
+
+## 操作系统生成文件
+.DS_Store
+Thumbs.db
+
+## Node / 前端依赖（如果后续引入）
+node_modules/

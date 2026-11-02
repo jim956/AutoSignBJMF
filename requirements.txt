@@ -3,3 +3,4 @@ APScheduler==3.10.4
 SQLAlchemy>=2.0.36,<2.1
 requests==2.32.3
 beautifulsoup4==4.12.3
+werkzeug

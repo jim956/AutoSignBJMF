@@ -1,11 +1,16 @@
-from datetime import timedelta
 import json
+import logging
+import time
+import traceback
+from datetime import timedelta
 
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import delete
 
 from .models import Task, TaskLog, now_local
 
+logger = logging.getLogger(__name__)
 
 # ISO 星期（1=周一 … 7=周日，与 datetime.isoweekday() 一致）对应的 cron 星期名
 WEEKDAY_CRON_NAMES = {
@@ -57,7 +62,8 @@ def parse_times(times_json):
                 except ValueError:
                     continue
             return result
-    except Exception:
+    except Exception as exc:
+        logger.warning("解析时间点配置失败，按空配置处理: %s (原始值: %r)", exc, times_json)
         return []
     return []
 
@@ -74,7 +80,10 @@ def parse_weekday_times(weekday_json):
     """
     try:
         data = json.loads(weekday_json) if isinstance(weekday_json, str) else weekday_json
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "解析按星期时间配置失败，按未配置处理: %s (原始值: %r)", exc, weekday_json
+        )
         return {}
     if not isinstance(data, dict):
         return {}
@@ -169,12 +178,26 @@ def register_task_jobs(app, task: Task):
             end_date=task.date_end,
             timezone="Asia/Shanghai",
         )
-        scheduler.add_job(
+        job = scheduler.add_job(
             func=run_task_job,
             trigger=trigger,
             id=job_id,
             args=[task.id],
             replace_existing=True,
+        )
+        logger.debug(
+            "任务 #%s 注册调度 %s（星期 %s），下次执行: %s",
+            task.id,
+            t,
+            weekdays,
+            getattr(job, "next_run_time", None) or "未计算（可能已过生效日期范围）",
+        )
+
+    if not time_to_weekdays:
+        logger.warning("任务 #%s 没有任何可执行时间点，未注册调度", task.id)
+    else:
+        logger.debug(
+            "任务 #%s 调度注册完成：%s 个时间点", task.id, len(time_to_weekdays)
         )
 
 
@@ -185,9 +208,46 @@ def unregister_task_jobs(app, task_id: int):
     """
     scheduler = app.config["SCHEDULER"]
     # APScheduler 本身没有按前缀批量获取 job 的标准接口，实际实现中可维护映射。
+    removed = 0
     for job in scheduler.get_jobs():
         if job.id.startswith(f"task_{task_id}_"):
             scheduler.remove_job(job.id)
+            removed += 1
+    if removed:
+        logger.debug("任务 #%s 移除调度 %s 个", task_id, removed)
+
+
+def register_scheduler_listeners(scheduler):
+    """
+    注册 APScheduler 事件监听，集中记录调度层的问题。
+
+    即使任务函数内部已经捕获异常，这里也能兜住触发器层面的错误
+    （例如任务错过执行时间、实例数超限等），避免只留下一条库表日志。
+    """
+
+    def on_job_error(event):
+        logger.error(
+            "调度任务异常 job=%s 计划执行时间=%s",
+            event.job_id,
+            getattr(event, "scheduled_run_time", None),
+            exc_info=event.exception,
+        )
+
+    def on_job_missed(event):
+        # 错过执行通常意味着进程当时没在运行/卡住，值得保留告警
+        logger.warning(
+            "调度任务错过执行 job=%s 计划执行时间=%s",
+            event.job_id,
+            getattr(event, "scheduled_run_time", None),
+        )
+
+    def on_job_executed(event):
+        logger.debug("调度任务执行完成 job=%s", event.job_id)
+
+    scheduler.add_listener(on_job_error, EVENT_JOB_ERROR)
+    scheduler.add_listener(on_job_missed, EVENT_JOB_MISSED)
+    scheduler.add_listener(on_job_executed, EVENT_JOB_EXECUTED)
+    logger.debug("APScheduler 事件监听已注册（ERROR / MISSED / EXECUTED）")
 
 
 def register_existing_tasks(app):
@@ -196,13 +256,33 @@ def register_existing_tasks(app):
     同时顺带执行一次「清理 7 天前日志」的任务。
     """
     SessionLocal = app.config["DB_SESSION_FACTORY"]
+    registered = 0
+    failed = 0
     with SessionLocal() as db:
         tasks = db.query(Task).filter(Task.enabled.is_(True)).all()
         for task in tasks:
-            register_task_jobs(app, task)
+            # 单个任务的脏数据不能影响其他任务启动
+            try:
+                register_task_jobs(app, task)
+                registered += 1
+            except Exception:
+                failed += 1
+                logger.exception(
+                    "启动时注册任务 #%s 失败（用户=%s 班级=%s），已跳过",
+                    task.id,
+                    task.name,
+                    task.class_id,
+                )
 
         # 启动时进行一次历史日志清理
         cleanup_old_logs(db)
+
+    logger.info(
+        "启动加载调度任务完成：共 %s 个已启用任务，注册成功 %s 个，失败 %s 个",
+        len(tasks),
+        registered,
+        failed,
+    )
 
 
 def cleanup_old_logs(db):
@@ -211,14 +291,66 @@ def cleanup_old_logs(db):
     """
     threshold = now_local() - timedelta(days=7)
     stmt = delete(TaskLog).where(TaskLog.run_at < threshold)
-    db.execute(stmt)
+    result = db.execute(stmt)
     db.commit()
+    deleted = result.rowcount if result.rowcount and result.rowcount > 0 else 0
+    if deleted:
+        logger.info("清理 7 天前的任务执行日志：%s 条", deleted)
+    else:
+        logger.debug("任务执行日志无需清理（保留最近 7 天）")
 
 
 def run_task_job(task_id: int):
     """
-    真正执行签到任务的函数。
+    真正执行签到任务的函数（APScheduler 调用入口）。
+
+    这里统一兜住所有异常：完整堆栈写到应用日志，同时尽量往 task_logs
+    补一条 error 记录，保证后台页面也能看到这次失败。
     """
+    started = time.perf_counter()
+    logger.info("开始执行签到任务 #%s", task_id)
+    try:
+        _execute_task_job(task_id)
+    except Exception:
+        elapsed = time.perf_counter() - started
+        logger.exception("签到任务 #%s 执行失败（耗时 %.2fs）", task_id, elapsed)
+        _record_failure_log(task_id, traceback.format_exc())
+    else:
+        logger.debug(
+            "签到任务 #%s 执行流程结束（耗时 %.2fs）", task_id, time.perf_counter() - started
+        )
+
+
+def _record_failure_log(task_id: int, detail: str):
+    """执行异常时尽力写一条 task_logs，失败也只记录日志，不再抛出。"""
+    from .db import get_engine, get_session_factory
+
+    try:
+        SessionLocal = get_session_factory(get_engine())
+        now = now_local()
+        with SessionLocal() as db:
+            message = "\n".join(
+                [
+                    f"=================={now.strftime('%m-%d %H:%M:%S')} {WEEKDAY_LABELS[now.isoweekday()]}===================",
+                    "=========== 执行异常 ===============",
+                    "签到任务执行过程中抛出未处理异常，完整堆栈见应用日志（logs/error.log）。",
+                    detail[-4000:],
+                ]
+            )
+            db.add(
+                TaskLog(
+                    task_id=task_id,
+                    run_at=now,
+                    status="error",
+                    message=message,
+                )
+            )
+            db.commit()
+    except Exception:
+        logger.exception("任务 #%s 的异常日志写入数据库失败", task_id)
+
+
+def _execute_task_job(task_id: int):
     # 为了避免循环依赖，这里在函数内部导入 create_app 使用的会话工厂
     from .db import get_engine, get_session_factory
     from utils.attendance import Task as AttendanceTask
@@ -232,7 +364,19 @@ def run_task_job(task_id: int):
     with SessionLocal() as db:
         task = db.query(Task).filter(Task.id == task_id).first()
         if not task:
+            logger.warning("签到任务 #%s 已不存在（可能刚被删除），跳过本次执行", task_id)
             return
+
+        logger.info(
+            "任务 #%s 详情: 用户=%s 班级=%s(%s) 位置=(%s, %s) 通知=%s",
+            task.id,
+            task.name,
+            task.class_id,
+            task.class_name or "-",
+            task.lat,
+            task.lng,
+            "已配置" if task.pushplus_token else "未配置",
+        )
 
         # 组装与原有 CLI 脚本兼容的 student 配置，复用旧的签到逻辑
         student = {
@@ -247,7 +391,14 @@ def run_task_job(task_id: int):
         }
 
         # 调用旧的签到实现
-        user_name, result_status = AttendanceTask(student)
+        sign_started = time.perf_counter()
+        try:
+            user_name, result_status = AttendanceTask(student)
+        except Exception:
+            # 理论上 attendance.Task 内部已捕获，这里兜底并保留完整堆栈
+            logger.exception("签到逻辑抛出异常: 任务 #%s 用户=%s", task.id, task.name)
+            raise
+        sign_elapsed = time.perf_counter() - sign_started
 
         # 根据结果映射为可读中文说明
         status_map = {
@@ -266,16 +417,34 @@ def run_task_job(task_id: int):
 
         try:
             if task.pushplus_token:
-                channel="wechat" if is_success else "voice"
-                send_to_pushplus(
+                sent = send_to_pushplus(
                     token=task.pushplus_token,
                     title=notify_msg,
                     content=status_desc,
-                    channel=channel,
+                    channel="wechat",
                 )
+                logger.info(
+                    "任务 #%s pushplus 通知(channel=wechat) %s",
+                    task.id,
+                    "发送成功" if sent else "发送失败",
+                )
+                if not is_success:
+                    sent = send_to_pushplus(
+                        token=task.pushplus_token,
+                        title=notify_msg,
+                        content=status_desc,
+                        channel="voice",
+                    )
+                    logger.info(
+                        "任务 #%s pushplus 通知(channel=voice) %s",
+                        task.id,
+                        "发送成功" if sent else "发送失败",
+                    )
+            else:
+                logger.debug("任务 #%s 未配置 pushplus_token，跳过通知", task.id)
         except Exception:
             # 通知失败不影响主流程
-            pass
+            logger.exception("任务 #%s 发送通知时发生异常，已忽略", task.id)
 
         # 生成结构化日志文本，兼顾可读性与调试信息
         log_text_lines = [
@@ -319,3 +488,29 @@ def run_task_job(task_id: int):
         db.commit()
         cleanup_old_logs(db)
 
+        # 汇总一条带关键信息的执行日志，便于 grep / 监控
+        if log_status == "success":
+            logger.info(
+                "签到任务 #%s 完成: 结果=%s 用户=%s 班级=%s 签到耗时=%.2fs",
+                task.id,
+                result_status,
+                user_name or task.name,
+                task.class_id,
+                sign_elapsed,
+            )
+        elif log_status == "skipped":
+            logger.warning(
+                "签到任务 #%s 跳过: %s（用户=%s 班级=%s，可能 cookie 失效或不在签到时间）",
+                task.id,
+                result_status,
+                user_name or task.name,
+                task.class_id,
+            )
+        else:
+            logger.error(
+                "签到任务 #%s 失败: 结果=%s 用户=%s 班级=%s（详细过程见上面的日志）",
+                task.id,
+                result_status,
+                user_name or task.name,
+                task.class_id,
+            )

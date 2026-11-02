@@ -139,49 +139,7 @@
       font-size: 12px;
       color: var(--text-soft);
     }
-    .stepper {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 8px;
-      flex-wrap: wrap;
-    }
-    .step {
-      flex: 1;
-      min-width: 0;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      color: var(--text-soft);
-      opacity: 0.7;
-      transition: opacity 0.18s ease;
-    }
-    .step.active {
-      opacity: 1;
-      color: var(--accent);
-    }
-    .step-badge {
-      width: 18px;
-      height: 18px;
-      border-radius: 999px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 11px;
-      background: rgba(15,23,42,0.9);
-      border: 1px solid rgba(148,163,184,0.65);
-    }
-    .step.active .step-badge {
-      border-color: rgba(56,189,248,0.9);
-      background: radial-gradient(circle at top, rgba(56,189,248,0.35), rgba(15,23,42,0.85));
-      color: #e0f2fe;
-    }
-    .step-text-main {
-      font-weight: 500;
-    }
-    .step-text-sub {
-      font-size: 11px;
-    }
+
     .qr-wrapper {
       display: flex;
       align-items: center;
@@ -262,13 +220,7 @@
       align-items: center;
       gap: 6px;
     }
-    .dot-online {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #22c55e;
-      box-shadow: 0 0 0 4px rgba(34,197,94,0.4);
-    }
+
     .dot-offline {
       width: 7px;
       height: 7px;
@@ -385,16 +337,7 @@
       gap: 6px;
       margin-top: 4px;
     }
-    .time-pill {
-      border-radius: 999px;
-      padding: 3px 8px;
-      font-size: 11px;
-      border: 1px solid rgba(148,163,184,0.7);
-      background: rgba(15,23,42,0.9);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
+
     .time-pill button {
       border: none;
       padding: 0;
@@ -420,38 +363,7 @@
       gap: 6px;
       margin-top: 6px;
     }
-    .weekday-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      font-size: 12px;
-    }
-    .weekday-name {
-      width: 34px;
-      flex-shrink: 0;
-      color: #cbd5f5;
-    }
-    .weekday-mode {
-      width: 100%;
-      max-width: 104px;
-      flex-shrink: 0;
-    }
-    .weekday-editor {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      flex: 1;
-      min-width: 200px;
-    }
-    .weekday-time-input {
-      width: 100%;
-      max-width: 150px;
-    }
-    .weekday-hint {
-      font-size: 11px;
-      color: var(--text-soft);
-    }
+
     /* 班级多选：一个账号可能加入多个班级 */
     .class-list {
       display: flex;
@@ -459,21 +371,7 @@
       gap: 6px;
       margin-top: 2px;
     }
-    .class-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 9px;
-      border-radius: 10px;
-      border: 1px solid rgba(51, 65, 85, 0.85);
-      background: rgba(15, 23, 42, 0.95);
-      font-size: 12px;
-      cursor: pointer;
-      transition: border-color 0.16s ease, background 0.16s ease;
-    }
-    .class-item:hover {
-      border-color: rgba(56, 189, 248, 0.6);
-    }
+
     .class-item input[type="checkbox"] {
       accent-color: #38bdf8;
       width: 14px;
@@ -481,19 +379,7 @@
       flex-shrink: 0;
       cursor: pointer;
     }
-    .class-name {
-      color: #e5e7eb;
-      flex: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .class-meta {
-      font-size: 11px;
-      color: var(--text-soft);
-      flex-shrink: 0;
-    }
+
     .btn-row {
       display: flex;
       justify-content: flex-end;
@@ -566,18 +452,7 @@
       border-radius: 50%;
       background: #6b7280;
     }
-    .status-dot.running {
-      background: #38bdf8;
-      box-shadow: 0 0 0 4px rgba(56,189,248,0.4);
-    }
-    .status-dot.success {
-      background: #22c55e;
-      box-shadow: 0 0 0 4px rgba(34,197,94,0.5);
-    }
-    .status-dot.error {
-      background: #f97373;
-      box-shadow: 0 0 0 4px rgba(248,113,113,0.45);
-    }
+
     .status-label {
       text-transform: uppercase;
       font-size: 11px;
@@ -622,33 +497,7 @@
       max-height: 260px;
       overflow: auto;
     }
-    .log-item {
-      border-bottom: 1px dashed rgba(30, 41, 59, 0.9);
-      padding: 6px 0;
-      font-size: 12px;
-    }
-    .log-time {
-      color: var(--text-soft);
-      margin-bottom: 2px;
-    }
-    .log-task {
-      color: #e5e7eb;
-      margin-bottom: 2px;
-    }
-    .log-status {
-      font-size: 11px;
-      color: var(--success);
-      margin-bottom: 2px;
-    }
-    .log-status.error {
-      color: var(--danger);
-    }
-    .log-message {
-      white-space: pre-wrap;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      color: #e5e7eb;
-      margin: 0;
-    }
+
   </style>
 </head>
 <body>
@@ -731,7 +580,7 @@
               <span class="label-tag">Account</span>
               <span>姓名</span>
             </div>
-            <input id="name" class="input" type="text" readonly placeholder="扫码后自动识别" />
+            <label for="name"></label><input id="name" class="input" type="text" readonly placeholder="扫码后自动识别" />
           </div>
           <div class="field">
             <div class="label">
@@ -754,7 +603,7 @@
               <span>经纬度</span>
             </div>
             <div class="field-row">
-              <input
+              <label for="coord"></label><input
                 id="coord"
                 class="input"
                 type="text"
@@ -778,7 +627,7 @@
               <span>pushplus_token（可选）</span>
               <a class="label-link" href="https://www.pushplus.plus/" target="_blank" rel="noopener noreferrer" title="前往 pushplus 官网获取 token">↗</a>
             </div>
-            <input id="pushplusToken" class="input" type="text" />
+            <label for="pushplusToken"></label><input id="pushplusToken" class="input" type="text" />
           </div>
         </div>
 
@@ -789,8 +638,8 @@
             <span>执行时间点（支持秒）</span>
           </div>
           <div class="field-row">
-            <input id="timeInput" class="time-input" type="time" step="1" />
-            <select id="timePreset" class="time-input time-preset-select">
+            <label for="timeInput"></label><input id="timeInput" class="time-input" type="time" step="1" />
+            <label for="timePreset"></label><select id="timePreset" class="time-input time-preset-select">
               <option value="">常用时间</option>
               <option value="07:10:00">07:10:00</option>
               <option value="07:30:00">07:30:00</option>
@@ -826,15 +675,15 @@
           </div>
           <div class="field-row">
             <div class="field-row" style="gap:6px">
-              <select id="dateStartYear" class="time-input date-year-select"></select>
-              <select id="dateStartMonth" class="time-input"></select>
-              <select id="dateStartDay" class="time-input"></select>
+              <label for="dateStartYear"></label><select id="dateStartYear" class="time-input date-year-select"></select>
+              <label for="dateStartMonth"></label><select id="dateStartMonth" class="time-input"></select>
+              <label for="dateStartDay"></label><select id="dateStartDay" class="time-input"></select>
             </div>
             <span style="color:var(--text-soft);font-size:12px;">~</span>
             <div class="field-row" style="gap:6px">
-              <select id="dateEndYear" class="time-input date-year-select"></select>
-              <select id="dateEndMonth" class="time-input"></select>
-              <select id="dateEndDay" class="time-input"></select>
+              <label for="dateEndYear"></label><select id="dateEndYear" class="time-input date-year-select"></select>
+              <label for="dateEndMonth"></label><select id="dateEndMonth" class="time-input"></select>
+              <label for="dateEndDay"></label><select id="dateEndDay" class="time-input"></select>
             </div>
           </div>
           <div class="hint-text">
@@ -1107,6 +956,7 @@
           return;
         }
         const data = await resp.json();
+        data.cookie_changed = undefined;
         if (!data || !data.has_task || !data.config) {
           // 该账号还没有任何任务配置，保持为空让用户首次填写
           return;
@@ -1135,11 +985,7 @@
           setDateToSelect(dateEndYear, dateEndMonth, dateEndDay, cfg.date_end);
         }
         // 如果后端认为 cookie 已变化，给出一次性提示
-        if (data.cookie_changed) {
-          alert("检测到本次扫码获得的新 Cookie 与之前存储的不一致，说明旧登录已过期，本次已自动更新为新的 Cookie。");
-        } else {
-          setTaskStatus("running", "已根据历史配置自动填充表单，如需修改可直接编辑后重新提交。");
-        }
+        setTaskStatus("running", "已根据历史配置自动填充表单，如需修改可直接编辑后重新提交。");
       } catch (e) {
         console.error(e);
       }

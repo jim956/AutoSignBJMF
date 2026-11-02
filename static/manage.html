@@ -135,14 +135,7 @@
       margin-right: 6px;
       background: #6b7280;
     }
-    .status-dot.ok {
-      background: #22c55e;
-      box-shadow: 0 0 0 4px rgba(34,197,94,0.4);
-    }
-    .status-dot.bad {
-      background: #f97373;
-      box-shadow: 0 0 0 4px rgba(248,113,113,0.4);
-    }
+
     .layout {
       display: grid;
       grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr);
@@ -172,22 +165,7 @@
     tbody tr:hover {
       background: rgba(15,23,42,0.75);
     }
-    .tag {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 6px;
-      border-radius: 999px;
-      border: 1px solid rgba(148,163,184,0.6);
-      font-size: 11px;
-    }
-    .tag-on {
-      border-color: rgba(34,197,94,0.8);
-      color: #bbf7d0;
-    }
-    .tag-off {
-      border-color: rgba(148,163,184,0.9);
-      color: #e5e7eb;
-    }
+
     .scroll {
       max-height: 420px;
       overflow: auto;
@@ -205,17 +183,7 @@
       flex-direction: column;
       gap: 4px;
     }
-    .weekday-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-    }
-    .weekday-name {
-      width: 34px;
-      flex-shrink: 0;
-      color: #cbd5f5;
-    }
+
     .weekday-row select {
       max-width: 96px;
       flex-shrink: 0;
@@ -224,14 +192,7 @@
       flex: 1;
       min-width: 0;
     }
-    .weekday-note {
-      color: var(--text-soft);
-      font-size: 11px;
-    }
-    .times-sub {
-      color: var(--text-soft);
-      font-size: 11px;
-    }
+
     .label {
       color: var(--text-soft);
       font-size: 12px;
@@ -247,30 +208,7 @@
       padding: 6px 8px;
       resize: vertical;
     }
-    .log-item {
-      border-bottom: 1px dashed rgba(30,41,59,0.9);
-      padding: 6px 0;
-      font-size: 12px;
-    }
-    .log-time {
-      color: var(--text-soft);
-      margin-bottom: 2px;
-    }
-    .log-task {
-      color: #e5e7eb;
-      margin-bottom: 2px;
-    }
-    .log-status {
-      font-size: 11px;
-      color: var(--success);
-      margin-bottom: 2px;
-    }
-    .log-status.error { color: var(--danger); }
-    .log-message {
-      white-space: pre-wrap;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      color: #e5e7eb;
-    }
+
   </style>
 </head>
 <body>
@@ -294,9 +232,9 @@
     <div class="layout">
       <div class="card">
         <div class="row" style="margin-bottom:8px;">
-          <input id="filterName" class="input" placeholder="按姓名模糊搜索" />
-          <input id="filterClass" class="input" placeholder="按班级模糊搜索" />
-          <select id="filterEnabled">
+          <label for="filterName"></label><input id="filterName" class="input" placeholder="按姓名模糊搜索" />
+          <label for="filterClass"></label><input id="filterClass" class="input" placeholder="按班级模糊搜索" />
+          <label for="filterEnabled"></label><select id="filterEnabled">
             <option value="">全部状态</option>
             <option value="1">仅启用</option>
             <option value="0">仅禁用</option>
@@ -328,15 +266,15 @@
         </div>
         <div class="field-col">
           <div class="label">坐标（lat lng）</div>
-          <input id="editCoord" class="input" placeholder="例如：26.056756 119.196135" />
+          <label for="editCoord"></label><input id="editCoord" class="input" placeholder="例如：26.056756 119.196135" />
         </div>
         <div class="field-col">
           <div class="label">pushplus Token（可选，用于签到结果通知）</div>
-          <input id="editPushplus" class="input" placeholder="pushplus Token" />
+          <label for="editPushplus"></label><input id="editPushplus" class="input" placeholder="pushplus Token" />
         </div>
         <div class="field-col">
           <div class="label">每天执行时间点（用英文逗号分隔，例如 07:30:00,12:00:00）</div>
-          <input id="editTimes" class="input" placeholder="07:30:00,12:00:00" />
+          <label for="editTimes"></label><input id="editTimes" class="input" placeholder="07:30:00,12:00:00" />
         </div>
         <div class="field-col">
           <div class="label">按星期单独设置（选「沿用每天」则使用上面的时间点）</div>
@@ -344,7 +282,7 @@
         </div>
         <div class="field-col">
           <div class="label">任务状态</div>
-          <select id="editEnabled" class="input">
+          <label for="editEnabled"></label><select id="editEnabled" class="input">
             <option value="1">启用</option>
             <option value="0">禁用</option>
           </select>
@@ -671,7 +609,7 @@
           return;
         }
         alert("保存成功。");
-        loadTasks();
+        await loadTasks();
       } catch (e) {
         alert("请求失败：" + e.message);
       }
@@ -703,7 +641,7 @@
         editTimes.value = "";
         resetWeekdayEditor();
         logList.innerHTML = '<div class="status-text">任务已删除。</div>';
-        loadTasks();
+        await loadTasks();
       } catch (e) {
         alert("请求失败：" + e.message);
       }

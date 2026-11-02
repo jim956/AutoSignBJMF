@@ -1,26 +1,61 @@
-# 本地/敏感文件，不需要进入镜像
-.venv/
-venv/
+# ---------- 版本控制 / 容器配置 ----------
 .git/
-.idea/
-.vscode/
+.gitignore
+.gitattributes
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
-.env
-.env.*
-web_signin/db/
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# 测试 / 类型检查 / 缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- 运行时数据（不要打进镜像） ----------
+# 本地数据库含 Cookie 等敏感信息，应用启动时会自动创建 db/ 目录
+db/
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
-.claude/
 
-# 运行时产物与调试文件
-debug_html.txt
-web_signin/debug_html.txt
-debug_qr.html
+# 本地日志
 logs/
 *.log
+*.log.*
 
-# 系统文件与文档图片
+# 调试输出
+debug_qr.html
+debug_html.txt
+
+# ---------- 本地配置 / 密钥 ----------
+.env
+.env.*
+config.json
+*.pem
+*.key
+
+# ---------- 与运行无关的文件 ----------
+README.md
+pyproject.toml
+.python-version
+src/
+.claude/
+.idea/
+.vscode/
 .DS_Store
-doc/
+Thumbs.db

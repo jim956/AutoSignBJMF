@@ -1,4 +1,5 @@
 import base64
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -6,6 +7,17 @@ from typing import Dict, Optional
 
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+try:
+    from utils.log_config import mask_secret
+except ImportError:  # 兼容以脚本方式直接运行时 sys.path 尚未补全的情况
+    def mask_secret(value, visible: int = 4) -> str:
+        text = str(value or "")
+        if len(text) <= visible * 2:
+            return "*" * len(text)
+        return f"{text[:visible]}***{text[-visible:]}"
 
 
 @dataclass
@@ -82,18 +94,18 @@ class QRLoginService:
                 return src
 
         # 3. 找不到时，把 HTML 落地一份，方便后续排查
+        import os
+        debug_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "debug_qr.html"
+        )
         try:
-            import os
-
-            debug_path = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "debug_qr.html"
-            )
             with open(debug_path, "w", encoding="utf-8") as f:
                 f.write(html)
-        except Exception:
+        except Exception as exc:
             # 调试文件写入失败不影响主流程，继续抛出错误
-            pass
+            logger.warning("保存二维码调试 HTML 到 %s 失败: %s", debug_path, exc)
 
+        logger.error("二维码页面中未找到 img[src]，页面结构可能已变化")
         raise ValueError("未找到二维码 img 标签，请查看 debug_qr.html 分析页面结构")
 
     def _qr_image_base64(self, url: str, sess: requests.Session) -> str:
@@ -115,11 +127,16 @@ class QRLoginService:
         """
         sess = self._new_requests_session()
         try:
-            html = sess.get(self.base_url).text
-            qr_url = self._extract_qr_url(html)
+            response = sess.get(self.base_url)
+            logger.debug("请求扫码登录页: HTTP %s url=%s", response.status_code, self.base_url)
+            if response.status_code != 200:
+                logger.warning("扫码登录页返回非 200: HTTP %s", response.status_code)
+
+            qr_url = self._extract_qr_url(response.text)
             qr_b64 = self._qr_image_base64(qr_url, sess)
-        except Exception as e:
-            return {"error": f"获取二维码失败: {e}"}
+        except Exception as exc:
+            logger.exception("创建扫码会话失败 token=%s", mask_secret(token))
+            return {"error": f"获取二维码失败: {exc}"}
 
         now = time.time()
         state = QRSessionState(token=token, created_at=now)
@@ -132,12 +149,26 @@ class QRLoginService:
             ]
             for key in expired_tokens:
                 self._sessions.pop(key, None)
+            if expired_tokens:
+                logger.debug("清理过期扫码会话 %s 个", len(expired_tokens))
             self._sessions[token] = state
+            session_count = len(self._sessions)
 
-        # 启动一个后台线程轮询扫码状态
-        thread = threading.Thread(target=self._poll_login_status, args=(token, sess), daemon=True)
+        # 启动一个后台线程轮询扫码状态（线程名带上脱敏 token，便于区分并发扫码）
+        thread = threading.Thread(
+            target=self._poll_login_status,
+            args=(token, sess),
+            daemon=True,
+            name=f"qr-poll-{mask_secret(token, visible=3)}",
+        )
         thread.start()
 
+        logger.info(
+            "扫码会话已创建 token=%s 有效期=%ss 当前会话数=%s",
+            mask_secret(token),
+            self.session_ttl,
+            session_count,
+        )
         return {
             "token": token,
             "qrcode": qr_b64,
@@ -168,26 +199,44 @@ class QRLoginService:
 
             from utils.user_info import get_user_and_classes
 
+        masked_token = mask_secret(token)
+        error_logged = False
+        logger.debug("开始轮询扫码状态 token=%s 最大次数=%s", masked_token, max_attempts)
+
         for i in range(max_attempts):
             with self._lock:
                 state = self._sessions.get(token)
                 if not state:
+                    logger.debug("扫码会话已被清理，停止轮询 token=%s", masked_token)
                     return
                 # 超时检查
                 if time.time() - state.created_at > self.session_ttl:
                     state.expired = True
                     self._sessions[token] = state
+                    logger.info("扫码会话已过期 token=%s", masked_token)
                     return
 
             try:
                 resp = sess.get(check_url)
                 if resp.status_code != 200:
+                    if not error_logged:
+                        logger.warning(
+                            "轮询扫码状态返回 HTTP %s，将继续重试 token=%s",
+                            resp.status_code,
+                            masked_token,
+                        )
+                        error_logged = True
                     time.sleep(1)
                     continue
 
                 try:
                     data = resp.json()
                 except Exception:
+                    logger.debug(
+                        "扫码状态响应不是 JSON token=%s: %s",
+                        masked_token,
+                        (resp.text or "")[:200],
+                    )
                     time.sleep(1)
                     continue
 
@@ -210,8 +259,11 @@ class QRLoginService:
                     state.is_confirmed = True
                     self._sessions[token] = state
 
+                logger.info("扫码已确认，正在获取登录凭据 token=%s", masked_token)
+
                 # 使用 StudentSession 逻辑获取 cookie
                 cookie = self._get_cookie_from_redirect(redirect_url)
+                logger.debug("已获取登录 cookie token=%s", masked_token)
 
                 # 调用现有逻辑获取用户 + 班级信息（一个账号可能有多个班级）
                 student = {"cookie": cookie}
@@ -231,14 +283,37 @@ class QRLoginService:
                     state.class_code = first_class.get("class_code")
                     self._sessions[token] = state
 
+                logger.info(
+                    "扫码登录成功 token=%s 用户=%s 班级数=%s",
+                    masked_token,
+                    user_info.get("name") or "未知",
+                    len(classes or []),
+                )
+                if user_info.get("name") in (None, "", "未找到"):
+                    logger.warning(
+                        "扫码登录成功但未解析到用户姓名，cookie 可能无效 token=%s",
+                        masked_token,
+                    )
+
                 return
 
             except Exception as e:
-                # 单次轮询的网络抖动不应直接中止整个扫码会话，继续重试直到超时
-                print(f"轮询异常，稍后重试: {e}")
+                # 单次轮询的网络抖动不应直接中止整个扫码会话，继续重试直到超时；
+                # 同一会话只把第一条异常打成 WARNING，避免每秒刷屏。
+                if not error_logged:
+                    logger.warning(
+                        "轮询扫码状态异常，将继续重试 token=%s: %s",
+                        masked_token,
+                        e,
+                        exc_info=True,
+                    )
+                    error_logged = True
+                else:
+                    logger.debug("轮询扫码状态异常 token=%s: %s", masked_token, e)
                 time.sleep(1)
 
         # 超过最大轮询次数
+        logger.info("扫码会话轮询次数用尽仍未确认，已置为过期 token=%s", masked_token)
         with self._lock:
             state = self._sessions.get(token)
             if state:
@@ -282,8 +357,10 @@ class QRLoginService:
         cookies = sess.cookies.get_dict()
         # 移除不必要的 cookie，与原脚本保持一致
         cookies.pop("s", None)
+        logger.debug("重定向登录响应: HTTP %s，可用 cookie 字段 %s 个", resp.status_code, len(cookies))
         cookie_pairs = [f"{k}={v}" for k, v in cookies.items()]
         if not cookie_pairs:
+            logger.warning("重定向登录成功但未获取到有效 cookie（响应可能已改版）")
             raise ValueError("未获取到有效 cookie")
         return cookie_pairs[0]
 

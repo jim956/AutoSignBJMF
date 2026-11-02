@@ -1,7 +1,10 @@
+import logging
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).resolve().parent.parent / "db" / "web_signin.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -43,6 +46,7 @@ def _migrate_task_columns(engine):
         for column, ddl_type in additions.items():
             if column not in existing:
                 conn.execute(text(f"ALTER TABLE tasks ADD COLUMN {column} {ddl_type}"))
+                logger.info("数据库迁移: tasks 表新增列 %s %s", column, ddl_type)
 
 
 def init_db():
@@ -52,9 +56,15 @@ def init_db():
     """
     from . import models  # noqa: F401  # 导入以注册模型
 
-    engine = get_engine()
-    models.Base.metadata.create_all(bind=engine)
-    _migrate_task_columns(engine)
+    try:
+        engine = get_engine()
+        models.Base.metadata.create_all(bind=engine)
+        _migrate_task_columns(engine)
+    except Exception:
+        logger.exception("数据库初始化失败: %s", DB_PATH)
+        raise
+
+    logger.info("数据库已就绪: %s", DB_PATH)
     SessionLocal = get_session_factory(engine)
     return engine, SessionLocal
 

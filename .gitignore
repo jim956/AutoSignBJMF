@@ -1,47 +1,66 @@
-## 本地环境变量（docker compose 会读取仓库根目录的 .env，例如 WEB_SIGNIN_PORT）
-/.env
-.env.*
-*.env
-
-## Python 缓存
+# ---------- Python ----------
 __pycache__/
-*.pyc
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+.eggs/
 
-## 虚拟环境
+# 虚拟环境
 .venv/
 venv/
 env/
+ENV/
 
-## 日志与运行时输出
-logs/
-*.log
-*.out
-*.tmp
+# 测试 / 类型检查 / 覆盖率
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
-## 数据库 / 缓存文件（签到任务数据都存放在 SQLite 中，不入库）
-web_signin/db/
+# ---------- 运行时数据 ----------
+# SQLite 数据库（含 Cookie 等敏感信息，禁止提交）
+db/
 *.db
-*.db3
+*.db-journal
 *.sqlite
 *.sqlite3
-*.bak
 
-## 签到调试产物（仅在 BJMF_DEBUG_HTML=1 时生成）
+# 日志
+logs/
+*.log
+*.log.*
+
+# 调试输出（排查站点改版时可能生成）
+debug_qr.html
 debug_html.txt
-web_signin/debug_qr.html
 
-## 编辑器与 IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-.claude/
+# ---------- 本地配置 / 密钥 ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+config.json
 
-## 操作系统生成文件
+# ---------- 编辑器 / 操作系统 ----------
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
 
-## Node / 前端依赖（如果后续引入）
-node_modules/
+# uv
+.uv/
+
+# Claude Code 本地配置
+.claude/

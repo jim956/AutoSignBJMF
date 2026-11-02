@@ -6,18 +6,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app
 
-WORKDIR /app
-
 # 将整个仓库拷贝进容器：签到逻辑复用了根目录下的 utils 包
-COPY . /app
+WORKDIR /app
+COPY . .
 
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 # 安装 Web 版所需依赖
-RUN pip install --upgrade pip && \
-    pip install -r web_signin/requirements.txt
+RUN pip install --upgrade pip && pip install -r ./requirements.txt
 
-# 默认暴露端口（实际端口仍由 config.json / WEB_SIGNIN_PORT 决定，compose 已默认改为 9988）
-EXPOSE 9988
+# 默认暴露端口
+EXPOSE 8000
 
 # 容器启动命令
-CMD ["python", "web_signin/run.py"]
+CMD ["python", "./run.py"]
 

@@ -3,11 +3,16 @@
 负责执行签到任务
 """
 
+import logging
 import os
 import re
+
 import requests
 from bs4 import BeautifulSoup
+
 from .user_info import get_user_and_class_info
+
+logger = logging.getLogger(__name__)
 
 # 排查站点改版时，设置环境变量 BJMF_DEBUG_HTML=1 才会把未签到的页面落盘，
 # 避免正常运行时在进程工作目录里不断产生 debug_html.txt 垃圾文件。
@@ -34,7 +39,7 @@ def Task(student):
         # 检查是否成功获取了用户信息，如果没有则跳过该用户
         user_name = user_info.get('name', '未找到')
         if user_name == "未找到":
-            print(f"无法获取用户信息，可能是cookie过期或无效，跳过用户 {student['name']} 的签到任务")
+            logger.warning("无法获取用户信息，可能是cookie过期或无效，跳过用户 %s 的签到任务", student['name'])
             return student.get('name', '未知'), 'skip'
             
         # 班级 ID 以任务里记录的为准：
@@ -44,7 +49,7 @@ def Task(student):
         if not ClassID or ClassID == "未找到":
             ClassID = class_info.get('class_id', '')
         if not ClassID or ClassID == "未找到":
-            print(f"无法确定 {student.get('name', '未知')} 的班级 ID，跳过签到")
+            logger.warning("无法确定 %s 的班级 ID，跳过签到", student.get('name', '未知'))
             return student.get('name', '未知'), 'skip'
             
         # 使用从网页获取的姓名，如果获取失败则使用配置文件中的
@@ -55,7 +60,7 @@ def Task(student):
         # 检查是否成功获取了班级信息，如果没有也跳过该用户
         class_name = class_info.get('class_name', '未找到')
         if class_name == "未找到" and not ClassID:
-            print(f"无法获取班级信息，跳过用户 {name} 的签到任务")
+            logger.warning("无法获取班级信息，跳过用户 %s 的签到任务", name)
             return name, 'skip'
             
         lat = student['lat']
@@ -69,19 +74,19 @@ def Task(student):
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; X64; Linux; Android 9;) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Firefox/92.0  WeChat/x86_64 Weixin NetType/4G Language/zh_CN ABI/x86_64',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/wxpic,image/tpg,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        }
+            'Cookie': student['cookie']}
         
         # 添加Cookie
         # 优先使用完整cookie字符串，如果格式不标准则尝试提取
-        headers['Cookie'] = student['cookie']
         session.headers.update(headers)
         
         # 1. 访问个人中心以触发 remember_me 自动登录并获取 session cookie
         warmup_url = "https://bjmf.k8n.cn/student/my"
         try:
             session.get(warmup_url, timeout=10)
+            logger.debug("会话预热 %s 成功", warmup_url)
         except Exception as e:
-            print(f"会话预热失败: {e}")
+            logger.warning("会话预热失败（%s）: %s", warmup_url, e)
 
         # 2. 探测所有签到/打卡模块的列表页，合并所有签到项
         module_list = ['punchs', 'daka']
@@ -95,8 +100,9 @@ def Task(student):
 
             try:
                 response = session.get(list_url, timeout=10)
+                logger.debug("获取 %s 列表页: HTTP %s url=%s", module, response.status_code, response.url)
             except Exception as e:
-                print(f"获取 {module} 列表页失败: {e}")
+                logger.warning("获取 %s 列表页失败（%s）: %s", module, list_url, e)
                 continue
 
             # 策略1: 查找 punchcard_ID 格式（DOM属性，模块无关）
@@ -118,7 +124,7 @@ def Task(student):
             url_match = re.search(r'/student/(punch\w+|daka)/course/\d+/(\d+)', current_url)
             if url_match:
                 ptype, mid = url_match.group(1), url_match.group(2)
-                print(f"检测到直接跳转至 {ptype} 页面，ID: {mid}")
+                logger.info("检测到直接跳转至 %s 页面，ID: %s", ptype, mid)
                 if mid not in all_punch_types:
                     all_matches.append(mid)
                     all_punch_types[mid] = ptype
@@ -129,7 +135,7 @@ def Task(student):
         if not all_matches:
             if response is None:
                 # 两个列表页都没请求成功，没有任何页面可用于判断状态
-                print("获取签到列表页失败，无法判断签到状态")
+                logger.error("获取签到列表页失败，无法判断签到状态（用户=%s 班级=%s）", name, ClassID)
                 return name, 'error'
 
             # 尝试检测是否已经签到
@@ -138,26 +144,26 @@ def Task(student):
             # 检查方式1: punch-success-info
             success_info = soup_check.find(class_='punch-success-info')
             if success_info and "已签到" in success_info.get_text():
-                print(f"检测到已完成签到: {success_info.get_text(strip=True)}")
+                logger.info("检测到已完成签到: %s", success_info.get_text(strip=True))
                 return name, 'already_signed'
 
             # 检查方式2: punch-status
             status_div = soup_check.find(class_='punch-status')
             if status_div and "已签到" in status_div.get_text():
-                print(f"检测到已完成签到: {status_div.get_text(strip=True)}")
+                logger.info("检测到已完成签到: %s", status_div.get_text(strip=True))
                 return name, 'already_signed'
 
-            print("未找到在进行的签到/不在签到时间内")
-            print(f"Debug: Status Code: {response.status_code}")
+            logger.info("未找到在进行的签到/不在签到时间内（用户=%s 班级=%s）", name, ClassID)
+            logger.debug("列表页状态码: %s URL: %s", response.status_code, response.url)
             
             # Save HTML for debugging（仅 BJMF_DEBUG_HTML=1 时）
             if DEBUG_HTML:
                 try:
                     with open(DEBUG_HTML_PATH, "w", encoding="utf-8") as f:
                         f.write(response.text)
-                    print(f"Debug: HTML saved to {DEBUG_HTML_PATH}")
+                    logger.info("Debug: HTML saved to %s", DEBUG_HTML_PATH)
                 except Exception as e:
-                    print(f"Debug: 保存 HTML 失败: {e}")
+                    logger.warning("Debug: 保存 HTML 失败: %s", e)
             
             # print(f"Debug: Response Text Preview: {response.text[:200]}") # Uncomment for more details
             return name, 'no_sign_in'
@@ -166,7 +172,7 @@ def Task(student):
         # 全部尝试一遍，避免只签第一个就返回
         results = []
         for match in all_matches:
-            print(f"签到项: {match} (模块: {all_punch_types.get(match, 'punchs')})")
+            logger.info("签到项: %s (模块: %s)", match, all_punch_types.get(match, 'punchs'))
 
             punch_type = all_punch_types.get(match, 'punchs')
 
@@ -182,34 +188,35 @@ def Task(student):
 
             try:
                 response = session.post(url1, data=payload, timeout=10)
+                logger.debug("签到请求完成: 签到项=%s HTTP=%s", match, response.status_code)
             except Exception as e:
-                print(f"签到请求失败: {e}")
+                logger.warning("签到请求失败（签到项=%s）: %s", match, e)
                 results.append('error')
                 continue
 
             if response.status_code != 200:
-                print(f"请求失败，状态码: {response.status_code}")
+                logger.warning("签到请求失败，签到项=%s 状态码: %s", match, response.status_code)
                 results.append('error')
                 continue
 
-            print("网络请求成功")
+            logger.debug("签到请求成功: 签到项=%s", match)
             soup_response = BeautifulSoup(response.text, 'html.parser')
             title_div = soup_response.find('div', id='title')
 
             if title_div:
                 title_text = title_div.text.strip()
                 if "已签到" in title_text:
-                    print("已签到！无需再次签到")
+                    logger.info("签到项 %s 已签到！无需再次签到", match)
                     results.append('already_signed')
                 elif "未开始" in title_text:
-                    print("未开始签到,请稍后")
+                    logger.info("签到项 %s 未开始签到,请稍后", match)
                     results.append('not_started')
                 else:
-                    print("本次签到成功")
+                    logger.info("签到项 %s 本次签到成功", match)
                     results.append('success')
             else:
                 # 如果没有找到title_div，可能是签到成功但没有显示
-                print("签到请求成功，但无法确定状态")
+                logger.warning("签到项 %s 请求成功，但无法确定状态（响应中缺少 #title）", match)
                 results.append('success')
 
         # 按优先级汇总多个签到项的结果
@@ -217,6 +224,6 @@ def Task(student):
             if status in results:
                 return name, status
         return name, 'no_sign_in'
-    except Exception as e:
-        print(f"发生错误{e}，跳过该配置......")
+    except Exception:
+        logger.exception("签到任务发生未处理异常，用户=%s，跳过该配置", student.get('name', '未知'))
         return student.get('name', '未知'), 'error'

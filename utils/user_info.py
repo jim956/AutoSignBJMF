@@ -7,10 +7,13 @@
 统一按「班级列表」来解析，取第一个作为兼容字段，但完整列表要交给调用方。
 """
 
+import logging
 import re
 import datetime
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 REMEMBER_COOKIE_NAME = "remember_student_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
@@ -146,10 +149,11 @@ def get_user_and_classes(student):
             )
             if response_my.status_code == 200:
                 user_info['name'] = _parse_user_name(response_my.text) or "未找到"
+                logger.debug("获取用户信息页面成功: 姓名=%s", user_info['name'])
             else:
-                print(f"获取用户信息页面失败，状态码: {response_my.status_code}")
+                logger.warning("获取用户信息页面失败，状态码: %s", response_my.status_code)
         except requests.RequestException as exc:
-            print(f"获取用户信息页面异常: {exc}")
+            logger.warning("获取用户信息页面异常: %s", exc)
 
         # 班级列表（可能不止一个班级）
         try:
@@ -158,18 +162,17 @@ def get_user_and_classes(student):
             )
             if response_class.status_code == 200:
                 classes = parse_classes(response_class.text)
+                logger.debug("解析到 %s 个班级: %s", len(classes), [c['class_id'] for c in classes])
             else:
-                print(f"获取班级信息页面失败，状态码: {response_class.status_code}")
+                logger.warning("获取班级信息页面失败，状态码: %s", response_class.status_code)
         except requests.RequestException as exc:
-            print(f"获取班级信息页面异常: {exc}")
+            logger.warning("获取班级信息页面异常: %s", exc)
 
         user_info.setdefault('name', "未找到")
         return user_info, classes
 
-    except Exception as e:
-        print(f"获取用户信息时发生错误: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        logger.exception("获取用户信息时发生错误")
         return user_info or {"name": "未找到"}, classes
 
 
@@ -203,16 +206,18 @@ def get_user_and_class_info(student):
             'class_code': "未找到",
         }
 
-    # 输出信息
-    current_time = get_current_time()
-    print(f"==============={current_time}===================")
-    print("=========== 用户和班级信息 ===============")
-    print(f"用户姓名: {user_info.get('name', '未找到')}")
-    print(f"班级名称: {class_info.get('class_name', '未找到')}")
-    print(f"班级代号: {class_info.get('class_id', '未找到')}")
-    print(f"班级码: {class_info.get('class_code', '未找到')}")
+    # 输出信息（统一走日志，便于和调度任务 ID 关联）
+    logger.info(
+        "用户和班级信息: 姓名=%s 班级名称=%s 班级代号=%s 班级码=%s",
+        user_info.get('name', '未找到'),
+        class_info.get('class_name', '未找到'),
+        class_info.get('class_id', '未找到'),
+        class_info.get('class_code', '未找到'),
+    )
     if len(classes) > 1:
-        print(f"检测到 {len(classes)} 个班级: " + "、".join(
-            f"{c['class_id']}({c['class_name'] or '未命名'})" for c in classes
-        ))
+        logger.info(
+            "检测到 %s 个班级: %s",
+            len(classes),
+            "、".join(f"{c['class_id']}({c['class_name'] or '未命名'})" for c in classes),
+        )
     return user_info, class_info

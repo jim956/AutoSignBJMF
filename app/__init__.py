@@ -1,6 +1,13 @@
+import hashlib
+import json
+import logging
 import os
 import re
+import secrets
 import sys
+import time
+import uuid
+from datetime import datetime, timedelta
 
 # 通过 `python web_signin/run.py` 启动时，sys.path[0] 是 web_signin/ 目录，
 # 项目根目录不在其中，调度任务里 `from utils.attendance import Task` 会导入失败。
@@ -9,11 +16,9 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
 from apscheduler.schedulers.background import BackgroundScheduler
-import secrets
-import hashlib
-from datetime import datetime, timedelta
+from werkzeug.exceptions import HTTPException
 
 from .db import init_db
 from .scheduler import (
@@ -21,12 +26,21 @@ from .scheduler import (
     has_any_execution,
     parse_times,
     register_existing_tasks,
+    register_scheduler_listeners,
     register_task_jobs,
     unregister_task_jobs,
 )
 from .models import Task, TaskLog, Setting
 from .qr_login import QRLoginService
-import json
+from utils.log_config import get_log_dir, mask_secret, setup_logging
+
+logger = logging.getLogger(__name__)
+
+# 请求参数里这些字段不落日志（全部或部分脱敏）
+_SENSITIVE_QUERY_KEYS = {"token", "admin_token", "key", "password", "password_hash"}
+
+# 高频轮询/健康检查路径：成功时只记 DEBUG，失败仍记 INFO，避免刷屏
+_QUIET_PATHS = {"/health", "/api/qr/status"}
 
 
 qr_service = QRLoginService()
@@ -76,8 +90,33 @@ def _normalize_weekday_times(raw):
     return normalized, None
 
 
+def _safe_query_string() -> str:
+    """
+    当前请求的 query string，敏感参数（token/key 等）脱敏后返回，用于日志。
+    """
+    if not request.args:
+        return ""
+    parts = []
+    for key in request.args:
+        value = request.args.get(key, "") or ""
+        lower = key.lower()
+        if lower in _SENSITIVE_QUERY_KEYS or "token" in lower or "key" in lower:
+            value = mask_secret(value)
+        parts.append(f"{key}={value}")
+    return "&".join(parts)
+
+
 def create_app():
+    # 幂等初始化：run.py 已经配置过时不会重复添加 handler
+    setup_logging()
     app = Flask(__name__)
+
+    # Flask 默认会给 app.logger 加一个 stderr handler；统一交给根 logger，
+    # 否则同一条记录会在控制台出现两份。
+    app.logger.handlers.clear()
+    app.logger.propagate = True
+
+    logger.info("正在初始化 Web 应用（日志目录=%s）", get_log_dir())
 
     # 初始化数据库
     engine, SessionLocal = init_db()
@@ -86,14 +125,88 @@ def create_app():
 
     # 初始化 APScheduler（后台调度器）
     scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+    # 监听器要在 start 之前注册，才能捕获启动阶段的调度事件
+    register_scheduler_listeners(scheduler)
     scheduler.start()
     app.config["SCHEDULER"] = scheduler
+    logger.info("后台调度器已启动（时区 Asia/Shanghai）")
 
     # 简单的内存态管理员 token 管理（仅单进程场景）
     app.config["ADMIN_TOKENS"] = {}  # {token: expire_at_utc}
 
     # 启动时加载已启用任务到调度器
     register_existing_tasks(app)
+
+    @app.before_request
+    def _log_request_start():
+        """为每个请求分配 ID 并记录入口日志，便于串联同一次请求的多行日志。"""
+        g.request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+        g.request_started = time.perf_counter()
+
+        if request.path in _QUIET_PATHS:
+            logger.debug("请求开始 %s %s", request.method, request.path)
+            return
+
+        query = _safe_query_string()
+        logger.info(
+            "请求开始 %s %s%s remote=%s",
+            request.method,
+            request.path,
+            f"?{query}" if query else "",
+            request.remote_addr,
+        )
+
+    @app.after_request
+    def _log_request_end(response):
+        """记录请求耗时与响应码；响应头带 X-Request-ID，便于对应日志。"""
+        elapsed_ms = (time.perf_counter() - getattr(g, "request_started", time.perf_counter())) * 1000
+        # 高频轮询成功后只记 DEBUG；出错时仍然用 INFO 保留记录
+        if request.path in _QUIET_PATHS and response.status_code < 400:
+            logger.debug(
+                "请求结束 %s %s -> %s (%.1fms)",
+                request.method,
+                request.path,
+                response.status_code,
+                elapsed_ms,
+            )
+        else:
+            logger.info(
+                "请求结束 %s %s -> %s (%.1fms)",
+                request.method,
+                request.path,
+                response.status_code,
+                elapsed_ms,
+            )
+
+        request_id = getattr(g, "request_id", None)
+        if request_id:
+            response.headers.setdefault("X-Request-ID", request_id)
+        return response
+
+    @app.errorhandler(HTTPException)
+    def _handle_http_exception(exc):
+        """4xx 记一条 INFO，5xx 记一条 WARNING。"""
+        log = logger.warning if (exc.code or 500) >= 500 else logger.info
+        log(
+            "HTTP 异常 %s %s -> %s: %s",
+            request.method,
+            request.path,
+            exc.code,
+            exc.description,
+        )
+        return exc
+
+    @app.errorhandler(Exception)
+    def _handle_uncaught_exception(exc):
+        """兜底异常：完整堆栈写入 error.log，并给前端返回可追踪的 request_id。"""
+        logger.exception("未捕获异常 %s %s", request.method, request.path)
+        request_id = getattr(g, "request_id", None)
+        if request.path.startswith("/api/"):
+            return (
+                jsonify({"error": "服务器内部错误，请查看服务端日志", "request_id": request_id}),
+                500,
+            )
+        return f"服务器内部错误，请联系管理员并提供 request_id={request_id}", 500
 
     @app.get("/health")
     def health_check():
@@ -121,7 +234,13 @@ def create_app():
         token = secrets.token_urlsafe(16)
         result = qr_service.create_qr_session(token)
         if not result or result.get("error"):
+            logger.error(
+                "创建扫码会话失败 token=%s error=%s",
+                mask_secret(token),
+                (result or {}).get("error", "未知错误"),
+            )
             return jsonify({"error": result.get("error", "创建二维码失败")}), 500
+        logger.debug("二维码创建成功 token=%s", mask_secret(token))
         return jsonify(result)
 
     @app.get("/api/qr/status")
@@ -143,8 +262,12 @@ def create_app():
             return jsonify({"status": "expired"})
 
         if state.error:
+            logger.warning(
+                "扫码会话出错 token=%s error=%s", mask_secret(token), state.error
+            )
             return jsonify({"status": "error", "error": state.error})
         if state.expired:
+            logger.debug("扫码会话已过期 token=%s", mask_secret(token))
             return jsonify({"status": "expired"})
         if state.cookie and state.user_name:
             return jsonify(
@@ -188,6 +311,9 @@ def create_app():
 
         state = qr_service.get_session_state(token)
         if not state or not state.cookie or not state.user_name:
+            logger.warning(
+                "提交任务失败：扫码 token 无效或已过期 token=%s", mask_secret(token)
+            )
             return jsonify({"error": "invalid or expired token"}), 400
 
         # 兼容老版本：优先从 coord 解析，经纬度单独字段作为降级方案
@@ -286,6 +412,16 @@ def create_app():
         SessionLocal = app.config["DB_SESSION_FACTORY"]
         payloads = []
         any_created = False
+        logger.info(
+            "保存签到任务: 用户=%s 目标班级=%s 每天时间点=%s 按星期配置=%s 通知=%s 日期范围=%s~%s",
+            state.user_name,
+            target_class_ids,
+            normalized_times,
+            normalized_weekday_times if weekday_times_provided else "沿用已有",
+            "已配置" if pushplus_token else "未配置",
+            date_start.date() if date_start else "不限",
+            date_end.date() if date_end else "不限",
+        )
         with SessionLocal() as db:
             # 一个班级一条任务：多班级账号提交一次，会为每个选中的班级各建/更新一条，
             # 之后各自独立调度、独立推送通知。
@@ -307,6 +443,13 @@ def create_app():
 
                     # 清理历史遗留的重复任务（连同其调度 job 与日志）
                     for duplicated in existing_tasks[1:]:
+                        logger.warning(
+                            "清理重复任务 #%s（用户=%s 班级=%s，保留 #%s）",
+                            duplicated.id,
+                            duplicated.name,
+                            duplicated.class_id,
+                            task.id,
+                        )
                         unregister_task_jobs(app, duplicated.id)
                         db.delete(duplicated)
 
@@ -331,6 +474,15 @@ def create_app():
                     # 时间点可能变化，先清空旧 job 再重建
                     unregister_task_jobs(app, task.id)
                     register_task_jobs(app, task)
+                    logger.info(
+                        "已更新任务 #%s: 用户=%s 班级=%s(%s) 时间点=%s 启用=%s",
+                        task.id,
+                        task.name,
+                        task.class_id,
+                        task.class_name or "-",
+                        normalized_times,
+                        task.enabled,
+                    )
                 else:
                     task = Task(
                         name=state.user_name,
@@ -358,6 +510,14 @@ def create_app():
                     # 为新任务注册调度 job
                     register_task_jobs(app, task)
                     any_created = True
+                    logger.info(
+                        "已创建任务 #%s: 用户=%s 班级=%s(%s) 时间点=%s",
+                        task.id,
+                        task.name,
+                        task.class_id,
+                        task.class_name or "-",
+                        normalized_times,
+                    )
 
                 payloads.append(
                     {
@@ -629,6 +789,7 @@ def create_app():
         with SessionLocal() as db:
             existing_hash = _get_admin_key_hash(db)
             if existing_hash:
+                logger.warning("管理员 Key 已初始化，拒绝重复初始化 remote=%s", request.remote_addr)
                 return jsonify({"error": "admin key already initialized"}), 409
 
             setting = Setting(
@@ -638,6 +799,7 @@ def create_app():
             db.add(setting)
             db.commit()
 
+        logger.info("管理员 Key 初始化完成 remote=%s", request.remote_addr)
         return jsonify({"status": "ok"})
 
     @app.post("/api/admin/login")
@@ -661,9 +823,11 @@ def create_app():
         with SessionLocal() as db:
             key_hash = _get_admin_key_hash(db)
             if not key_hash:
+                logger.warning("管理员登录失败：尚未初始化 Key remote=%s", request.remote_addr)
                 return jsonify({"error": "admin key not initialized"}), 400
 
             if _hash_admin_key(key) != key_hash:
+                logger.warning("管理员登录失败：Key 不匹配 remote=%s", request.remote_addr)
                 return jsonify({"error": "invalid admin key"}), 401
 
         # 生成 admin token，默认有效期 24 小时
@@ -672,6 +836,7 @@ def create_app():
         expire_at = datetime.utcnow() + timedelta(seconds=expires_in)
         app.config["ADMIN_TOKENS"][token] = expire_at
 
+        logger.info("管理员登录成功 remote=%s token=%s", request.remote_addr, mask_secret(token))
         return jsonify({"token": token, "expires_in": expires_in})
 
     @app.get("/api/admin/tasks")
@@ -754,7 +919,17 @@ def create_app():
         with SessionLocal() as db:
             task = db.query(Task).filter(Task.id == task_id).first()
             if not task:
+                logger.warning("管理员修改任务 #%s 失败：任务不存在", task_id)
                 return jsonify({"error": "not found"}), 404
+
+            logger.info(
+                "管理员修改任务 #%s（用户=%s 班级=%s）字段=%s remote=%s",
+                task.id,
+                task.name,
+                task.class_id,
+                sorted(data.keys()),
+                request.remote_addr,
+            )
 
             if "lat" in data:
                 task.lat = str(data.get("lat") or task.lat)
@@ -915,8 +1090,16 @@ def create_app():
         with SessionLocal() as db:
             task = db.query(Task).filter(Task.id == task_id).first()
             if not task:
+                logger.warning("管理员删除任务 #%s 失败：任务不存在", task_id)
                 return jsonify({"error": "not found"}), 404
 
+            logger.warning(
+                "管理员删除任务 #%s（用户=%s 班级=%s）remote=%s",
+                task.id,
+                task.name,
+                task.class_id,
+                request.remote_addr,
+            )
             # 先移除调度任务，再删数据库记录
             unregister_task_jobs(app, task.id)
             db.delete(task)
@@ -924,4 +1107,5 @@ def create_app():
 
         return jsonify({"status": "ok"})
 
+    logger.info("Web 应用初始化完成")
     return app

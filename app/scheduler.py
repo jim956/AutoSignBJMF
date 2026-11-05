@@ -404,7 +404,7 @@ def _execute_task_job(task_id: int):
         status_map = {
             "success": "签到成功",
             "already_signed": "已签到，无需重复",
-            "not_started": "未开始签到，请稍后",
+            "not_started": "未开始签到，请稍候",
             "no_sign_in": "当前无可用签到",
             "skip": "跳过（信息不完整或 cookie 失效）",
             "error": "执行出错",
@@ -413,7 +413,7 @@ def _execute_task_job(task_id: int):
 
         # 发送通知：成功/已签到发“签到成功”，其他情况发“签到失败 + 原因”
         is_success = result_status in ("success", "already_signed")
-        notify_msg = "班级魔方自动签到成功！" if is_success else "班级魔方自动签到失败！"
+        notify_msg = "成功!班级魔方自动签到" if is_success else "失败!班级魔方自动签到"
 
         try:
             if task.pushplus_token:

@@ -647,24 +647,30 @@ def create_app():
                 .order_by(Task.created_at.desc())
                 .first()
             )
-
+            cookie_changed = False
+            has_task = True
             if not task:
-                return jsonify(
-                    {
-                        "has_task": False,
-                        "cookie_changed": False,
-                        "config": None,
-                    }
+                has_task = False
+                task_by_name=(
+                    db.query(Task)
+                    .filter(Task.name==state.user_name)
+                    .order_by(Task.created_at.desc())
+                    .first()
                 )
+                if task_by_name:
+                    cookie_changed = True
+                    has_task = True
+                    db.query(Task).filter(Task.name==state.user_name).update({"cookie": state.cookie})
+                    db.commit()
+                    task=task_by_name
+            # TODO 在多班级并且最后一条task的cookie与扫码获取的cookie一致的情况下,可能出现部分cookie过期但没及时同步的情况,这种情况较少,后来扔进消息队列异步处理,然后给用户发通知
 
             # 这里的 cookie_changed 主要用于「提示已更新」场景；
-            # 当前实现里 Task.cookie 就是最近一次使用的 cookie，
-            # 若你未来引入多次扫码并保留历史 cookie，可在此对比。
-            cookie_changed = task.cookie != state.cookie
+            # 当前实现里 Task.cookie 就是最近一次使用的 cookie
 
             return jsonify(
                 {
-                    "has_task": True,
+                    "has_task": has_task,
                     "cookie_changed": cookie_changed,
                     "config": {
                         "id": task.id,

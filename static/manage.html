@@ -184,7 +184,27 @@
       gap: 4px;
     }
 
+    .weekday-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(148,163,184,0.18);
+      background: rgba(15,23,42,0.5);
+      font-size: 12px;
+    }
+    .weekday-name {
+      min-width: 36px;
+      color: #cbd5f5;
+    }
+    .weekday-note {
+      font-size: 11px;
+      color: var(--text-soft);
+    }
     .weekday-row select {
+      width: auto;
       max-width: 96px;
       flex-shrink: 0;
     }
@@ -207,6 +227,177 @@
       font-size: 12px;
       padding: 6px 8px;
       resize: vertical;
+    }
+
+    /* 筛选栏：输入框按剩余空间伸缩 */
+    .row .input,
+    .row select {
+      flex: 1 1 140px;
+      width: auto;
+    }
+
+    /* 任务列表：列宽不足时横向滚动，避免挤压变形 */
+    .scroll {
+      -webkit-overflow-scrolling: touch;
+    }
+    table {
+      min-width: 640px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+    }
+    .tag-on {
+      color: #4ade80;
+      border-color: rgba(74, 222, 128, 0.5);
+      background: rgba(22, 101, 52, 0.35);
+    }
+    .tag-off {
+      color: #fca5a5;
+      border-color: rgba(248, 113, 113, 0.5);
+      background: rgba(127, 29, 29, 0.35);
+    }
+    .times-sub {
+      margin-top: 2px;
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    .status-dot.ok {
+      background: var(--success);
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+    }
+    .status-dot.bad {
+      background: var(--danger);
+      box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.25);
+    }
+
+    /* 执行日志 */
+    .log-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(15, 23, 42, 0.55);
+      font-size: 12px;
+    }
+    .log-time {
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+    .log-task {
+      font-size: 11px;
+      color: #cbd5f5;
+    }
+    .log-status {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--success);
+    }
+    .log-status.error {
+      color: var(--danger);
+    }
+    .log-message {
+      margin: 0;
+      max-height: 160px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #cbd5f5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ===== 竖屏 / 小屏适配 ===== */
+    @media (max-width: 700px) {
+      body {
+        padding: 12px;
+      }
+      .header {
+        align-items: flex-start;
+      }
+      .title {
+        font-size: 18px;
+        flex-wrap: wrap;
+      }
+      .card {
+        padding: 12px 12px 10px;
+      }
+
+      .row .input,
+      .row select {
+        flex: 1 1 100%;
+        width: 100%;
+      }
+      .row .btn {
+        flex: 1 1 auto;
+        justify-content: center;
+        padding: 9px 12px;
+      }
+
+      /* 输入框字号 16px，避免 iOS 聚焦时自动放大页面 */
+      .input,
+      select {
+        font-size: 16px;
+        padding: 9px 10px;
+      }
+
+      .weekday-row .input {
+        flex: 1 1 100%;
+      }
+
+      /* 16px 字号下「沿用每天」在 96px 内会被截断，竖屏放开宽度 */
+      .weekday-row select {
+        max-width: none;
+      }
+
+      /* 任务表在竖屏下改为卡片式列表，避免横向挤压和滚动 */
+      table {
+        min-width: 0;
+      }
+      thead {
+        display: none;
+      }
+      tbody,
+      tbody tr,
+      tbody td {
+        display: block;
+        width: 100%;
+      }
+      tbody tr {
+        margin-bottom: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(15, 23, 42, 0.55);
+      }
+      tbody td {
+        padding: 3px 0;
+        border-bottom: none;
+      }
+      tbody td[data-label]::before {
+        content: attr(data-label) "：";
+        font-size: 11px;
+        color: var(--text-soft);
+      }
+      tbody td[data-label="操作"] .btn {
+        width: 100%;
+        justify-content: center;
+        margin-top: 4px;
+      }
+
+      .scroll {
+        max-height: 60vh;
+      }
     }
 
   </style>
@@ -485,16 +676,20 @@
         const tr = document.createElement("tr");
         tr.dataset.id = task.id;
         const tdId = document.createElement("td");
+        tdId.dataset.label = "ID";
         tdId.textContent = String(task.id);
         const tdUser = document.createElement("td");
+        tdUser.dataset.label = "姓名 / 班级";
         // 多班级账号每个班级一条任务，显示班级名称更好区分
         const classPart = task.class_name
           ? `${task.class_name} (${task.class_id})`
           : task.class_id;
         tdUser.textContent = task.name + (classPart ? " / " + classPart : "");
         const tdCoord = document.createElement("td");
+        tdCoord.dataset.label = "坐标";
         tdCoord.textContent = (task.lat || "") + (task.lng ? " " + task.lng : "");
         const tdTimes = document.createElement("td");
+        tdTimes.dataset.label = "时间点";
         const dailyLine = document.createElement("div");
         dailyLine.textContent =
           Array.isArray(task.times) && task.times.length
@@ -511,11 +706,13 @@
           tdTimes.appendChild(line);
         });
         const tdEnabled = document.createElement("td");
+        tdEnabled.dataset.label = "启用";
         const span = document.createElement("span");
         span.className = "tag " + (task.enabled ? "tag-on" : "tag-off");
         span.textContent = task.enabled ? "启用" : "禁用";
         tdEnabled.appendChild(span);
         const tdOps = document.createElement("td");
+        tdOps.dataset.label = "操作";
         const btnSelect = document.createElement("button");
         btnSelect.className = "btn btn-ghost";
         btnSelect.textContent = "选择";
